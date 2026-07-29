@@ -1,0 +1,15 @@
+# dependencias
+node_modules
+
+# build do Next.js
+.next
+out
+build
+
+# variaveis de ambiente (NUNCA commitar segredos)
+.env
+.env.*
+!.env.example
+
+# sistema operacional
+.DS_Store
