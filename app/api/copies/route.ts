@@ -5,6 +5,8 @@
 // renderizados direto do campo "mensagem" (sem LLM).
 
 import { NextRequest, NextResponse } from "next/server";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import JSZip from "jszip";
 import { getAnthropic, ANTHROPIC_MODEL, anthropicConfigurado } from "@/lib/anthropic";
 import { getKnowledge } from "@/lib/knowledge";
@@ -361,15 +363,21 @@ async function gerarPaginaHtml(
   client: NonNullable<ReturnType<typeof getAnthropic>>,
   systemPrompt: string,
   tipo: "landing" | "sucesso" | "vendas",
-  capa: CampanhaEstruturada["capa"]
+  capa: CampanhaEstruturada["capa"],
+  exemploVendas: string
 ): Promise<string> {
-  const descricoes: Record<typeof tipo, string> = {
+  // A pagina de VENDAS tem tratamento proprio: segue o "Framework de Paginas
+  // de Vendas" (ja presente na base de conhecimento) e se espelha na estrutura
+  // do exemplo-ouro (BACEN), porem com os DADOS da campanha atual.
+  if (tipo === "vendas") {
+    return gerarPaginaVendas(client, systemPrompt, capa, exemploVendas);
+  }
+
+  const descricoes: Record<"landing" | "sucesso", string> = {
     landing:
       "LANDING PAGE de captação: headline forte, subheadline, benefícios do evento gratuito, FORM com campos Nome, E-mail e WhatsApp (action=[INSERIR_URL_DO_FORM]), data/hora do 1º evento e CTA de inscrição.",
     sucesso:
       "PÁGINA DE SUCESSO: confirmação da inscrição, convite para entrar no Grupo VIP do WhatsApp (link [INSERIR_LINK_GRUPO_VIP]), lembrete do 1º evento (data/hora) e próximos passos.",
-    vendas:
-      "PÁGINA DE VENDAS: oferta completa, cupom (use [INSERIR_CUPOM] e o cupom da capa), botão de checkout ([INSERIR_URL_CHECKOUT]), bônus = 3 mentorias, o SQ (Sistema de Questões) como FERRAMENTA JÁ INCLUSA (nunca como bônus), prova social histórica/da área, garantia de 7 dias, acesso de 12 meses e um FAQ.",
   };
 
   const userPrompt = [
@@ -378,6 +386,7 @@ async function gerarPaginaHtml(
     "- Responda SOMENTE com o HTML (comece em <!doctype html>). Sem comentários fora do HTML, sem ```.",
     "- CSS inline no <head> (<style>), responsivo (mobile-first), sem dependências externas.",
     "- PT-BR. Use placeholders operacionais entre colchetes quando faltar dado (ex.: [INSERIR_URL_DO_FORM], [INSERIR_LINK_GRUPO_VIP], [INSERIR_URL_CHECKOUT], [INSERIR_CUPOM]).",
+    "- Siga o \"FRAMEWORK DE PÁGINAS DE VENDAS\" da base de conhecimento no que se aplicar a esta página.",
     "",
     `TIPO DE PÁGINA: ${descricoes[tipo]}`,
     "",
@@ -387,6 +396,85 @@ async function gerarPaginaHtml(
   ].join("\n");
 
   const texto = await chamarLLM(client, systemPrompt, userPrompt, 8000);
+  return parseHtml(texto);
+}
+
+// ===== PÁGINA DE VENDAS — segue o Framework + espelha o exemplo-ouro BACEN =====
+async function gerarPaginaVendas(
+  client: NonNullable<ReturnType<typeof getAnthropic>>,
+  systemPrompt: string,
+  capa: CampanhaEstruturada["capa"],
+  exemploVendas: string
+): Promise<string> {
+  // System prompt dedicado: reforca o framework e injeta o exemplo-ouro (BACEN)
+  // como padrao de ESTRUTURA/HTML/CSS/responsividade — nunca de conteudo.
+  const systemVendas = [
+    systemPrompt,
+    "",
+    "===== TAREFA: PÁGINA DE VENDAS (LONGA) =====",
+    "Você vai gerar UMA página de vendas longa, completa e autocontida em HTML.",
+    "Ela DEVE seguir À RISCA o \"FRAMEWORK DE PÁGINAS DE VENDAS\" que está na BASE DE CONHECIMENTO acima.",
+    "",
+    "PRINCÍPIOS DO FRAMEWORK (não negociáveis):",
+    "- Comece pela TRANSFORMAÇÃO (o momento/oportunidade e a mudança de vida), nunca pelo produto.",
+    "- UM argumento por dobra. Cada seção defende uma única ideia.",
+    "- NUNCA prometa aprovação garantida. Só fatos verificáveis; nada de números inventados.",
+    "- Ícones VETORIAIS (SVG inline ou CSS). SEM emojis nos cards de carreira.",
+    "- Mobile-first (largura de referência 375–430px); tudo tem que ficar impecável no celular.",
+    "- Dourado reservado para o que é premium / para números de destaque.",
+    "- Cupom e cálculo de preços corretos e coerentes entre todas as seções de oferta.",
+    "- Garantia conforme o briefing (padrão 7 dias).",
+    "",
+    "ORDEM OBRIGATÓRIA DAS DOBRAS (de cima para baixo):",
+    "1) Faixa fixa (barra topo fixa com CTA/oferta).",
+    "2) Hero (transformação + headline + CTA principal).",
+    "3) Faixa de fatos (números/fatos verificáveis do concurso).",
+    "4) O momento (por que agora — janela de oportunidade).",
+    "5) Carreira (o que a carreira oferece — cards com ícones vetoriais, sem emojis).",
+    "6) Prova social (histórica/da área — nunca aprovado do concurso-alvo).",
+    "7) Ecossistema (o que compõe a preparação: cursos, SQ como FERRAMENTA inclusa, etc.).",
+    "8) Bônus (SOMENTE se houver — o único bônus típico são as mentorias).",
+    "9) Ofertas (Assinatura e Pacote/Pacotaço) com preços, cupom e CTA de checkout.",
+    "10) Comparação (tabela comparando os planos/ofertas).",
+    "11) Professores.",
+    "12) Garantia (conforme o briefing; padrão 7 dias).",
+    "13) Última chamada (reforço final + urgência real).",
+    "14) Ofertas resumidas (recap das ofertas com CTA).",
+    "15) FAQ.",
+    "16) Footer.",
+    "",
+    "GUARDRAILS DE OFERTA (repita mentalmente antes de escrever cada seção):",
+    "- O SQ (Sistema de Questões) é FERRAMENTA JÁ INCLUSA nos pacotes/assinaturas — NUNCA aparece como bônus.",
+    "- Único bônus típico = as mentorias.",
+    "- Garantia conforme o briefing (padrão 7 dias). Acesso/atualização = 12 meses (nunca \"até a prova\" nem \"permanente\").",
+    "- Prova social é histórica/da área; nunca invente aprovado do concurso-alvo.",
+    "- Nunca invente a oferta: use os dados da capa/briefing.",
+    "",
+    "EXEMPLO-OURO (BACEN) — use como PADRÃO DE ESTRUTURA, SEÇÕES, RESPONSIVIDADE e CSS INLINE.",
+    "Reproduza este NÍVEL de estrutura, seções, responsividade e CSS inline, mas com os DADOS da campanha atual.",
+    "NÃO reutilize textos, números, preços, nomes de professores nem dados do BACEN — eles são apenas referência de forma.",
+    "===== EXEMPLO-OURO (BACEN) =====",
+    exemploVendas || "(exemplo indisponível — siga o framework mesmo assim)",
+    "===== FIM DO EXEMPLO-OURO (BACEN) =====",
+  ].join("\n");
+
+  const userPrompt = [
+    "Gere a PÁGINA DE VENDAS COMPLETA e AUTOCONTIDA em HTML para a campanha abaixo.",
+    "",
+    "REQUISITOS TÉCNICOS:",
+    "- Responda SOMENTE com o HTML (comece em <!doctype html>). Sem comentários fora do HTML, sem ```.",
+    "- CSS inline no <head> (<style>), responsivo (mobile-first 375–430px), sem dependências externas (sem CDN, sem fontes externas, sem imagens remotas).",
+    "- Ícones vetoriais (SVG inline / CSS). Sem emojis nos cards de carreira.",
+    "- PT-BR, tom comercial e direto.",
+    "- Placeholders operacionais entre colchetes: [INSERIR_URL_CHECKOUT], [INSERIR_PRECO_CHEIO], [INSERIR_PRECO_COM_DESCONTO] e o cupom da campanha (use o cupom da capa; se faltar, [INSERIR_CUPOM]).",
+    "- Mantenha o cálculo de preços coerente entre todas as seções de oferta.",
+    "",
+    "ESTRUTURA: siga EXATAMENTE a ordem de dobras do framework (faixa fixa → Hero → faixa de fatos → O momento → carreira → prova social → ecossistema → bônus [se houver] → ofertas [Assinatura e Pacote/Pacotaço] → comparação → professores → garantia → última chamada → ofertas resumidas → FAQ → footer).",
+    "",
+    contextoCampanha(capa),
+  ].join("\n");
+
+  const texto = await chamarLLM(client, systemVendas, userPrompt, 32000);
   return parseHtml(texto);
 }
 
@@ -441,6 +529,12 @@ export async function POST(req: NextRequest) {
   const cerebro = await getKnowledge();
   // Base de consulta (referencias de copy): opcional, entra depois do cerebro.
   const referencias = await getReferencias();
+  // Exemplo-ouro de PAGINA DE VENDAS (BACEN): usado so no gerador da pagina de
+  // vendas como padrao de estrutura/HTML/CSS. Nao entra no getKnowledge (.html).
+  const exemploVendas = await readFile(
+    path.join(process.cwd(), "knowledge", "EXEMPLO - Pagina de Vendas BACEN.html"),
+    "utf-8"
+  ).catch(() => "");
   const systemPrompt = [
     "Voce e um copywriter especialista em lancamentos da Estrategia Concursos.",
     "Use a BASE DE CONHECIMENTO abaixo como fonte de verdade para tom, funil e oferta.",
@@ -576,7 +670,7 @@ export async function POST(req: NextRequest) {
   const paginasHtml: (string | null)[] = new Array(paginas.length).fill(null);
   await comConcorrencia(paginas, 4, async (p, i) => {
     try {
-      paginasHtml[i] = await gerarPaginaHtml(client, systemPrompt, p.tipo, capa);
+      paginasHtml[i] = await gerarPaginaHtml(client, systemPrompt, p.tipo, capa, exemploVendas);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "erro desconhecido";
       paginasHtml[i] = null;
