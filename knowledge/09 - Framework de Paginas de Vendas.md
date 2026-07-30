@@ -50,5 +50,3 @@ Revisar: título, faixa superior, Hero, headline, subheadline, selo, contador, d
 
 ## 7. Validação final
 Revisar desktop e mobile (390px); overflow horizontal; quebras de headline; nomes dos produtos; preços/cálculos; cupons; links; CTAs; contadores; prazo no script; responsividade; listas recolhidas; seletores; ausência de infos antigas; validar JS; não criar novos placeholders; salvar nova versão sem sobrescrever lotes anteriores; entregar HTML pronto para download. A página final deve ser clara, persuasiva, verificável, rápida de compreender e simples de comprar.
-
-> ⚠️ Pendente: o "prompt operacional preenchível" (material 2) ainda não foi fornecido — quando chegar, anexar aqui como seção 8.
