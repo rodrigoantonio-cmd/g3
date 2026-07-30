@@ -55,13 +55,18 @@ export default function CampanhasPage() {
 
       {!carregando &&
         campanhas.map((c) => (
-          <div className="card" key={c.id}>
+          <Link
+            className="card"
+            key={c.id}
+            href={`/campanhas/${c.id}`}
+            style={{ display: "block", textDecoration: "none", color: "inherit" }}
+          >
             <strong>{c.nome || c.concurso}</strong>
             <div className="rodape">
               Concurso: {c.concurso} · Status: {c.status} · Criada em{" "}
               {new Date(c.created_at).toLocaleDateString("pt-BR")}
             </div>
-          </div>
+          </Link>
         ))}
     </div>
   );
