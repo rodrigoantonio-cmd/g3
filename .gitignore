@@ -13,3 +13,4 @@ build
 
 # sistema operacional
 .DS_Store
+tsconfig.tsbuildinfo

@@ -9,7 +9,12 @@ import JSZip from "jszip";
 import { getAnthropic, ANTHROPIC_MODEL, anthropicConfigurado } from "@/lib/anthropic";
 import { getKnowledge } from "@/lib/knowledge";
 import { getReferencias } from "@/lib/referencias";
-import { renderEmailDocx } from "@/lib/docx";
+import {
+  renderEmailDocx,
+  renderAnuncioEstaticoDocx,
+  renderAnuncioVideoDocx,
+  renderYoutubeDocx,
+} from "@/lib/docx";
 import type { CampanhaEstruturada } from "@/lib/types";
 
 // Precisa do runtime Node.js (fs para o knowledge, Buffer para docx/zip).
@@ -33,13 +38,18 @@ const REGRAS_TEMPLATE = `
 FORMATACAO DO CORPO (template EC):
 - Escreva APENAS o corpo do e-mail (nao repita Assunto, Pre-header nem cabecalho).
 - Use **negrito** para enfase forte e _italico_ para enfase leve (marcacao inline).
-- Separe paragrafos como itens distintos da lista (um paragrafo por item).
-- Para representar uma linha em branco entre blocos, inclua um item vazio "".
-- Inclua a CTA apropriada ao tipo da peca, em uma linha propria:
-  - Convite  -> "**>>> QUERO PARTICIPAR GRATUITAMENTE <<<**"
-  - Alerta   -> "**>>> ASSISTIR AO VIVO NO YOUTUBE <<<**"
-  - Promo    -> uma CTA em "**[COLCHETES MAIUSCULOS]**" e, ao final, um P.S. com o WhatsApp dos consultores.
-- Se a peca nao se encaixar em Convite/Alerta/Promo, use uma CTA adequada a fase.
+- Cada paragrafo e um item da lista; use um item vazio "" para linha em branco entre blocos.
+- ESTRUTURA OBRIGATORIA — o e-mail NUNCA termina no botao:
+  1) Abertura/gancho.
+  2) Desenvolvimento (conteudo/oferta/prova social).
+  3) CTA (botao) no MEIO da mensagem, em uma linha propria.
+  4) Depois do botao, MAIS UM trecho curto de reforco/urgencia (1-3 paragrafos).
+  5) Assinatura final em duas linhas: "Um abraço," e depois "**Estratégia Concursos**".
+- CTA por tipo (na linha propria do passo 3):
+  - Convite -> "**>>> QUERO PARTICIPAR GRATUITAMENTE <<<**"
+  - Alerta  -> "**>>> ASSISTIR AO VIVO NO YOUTUBE <<<**"
+  - Promo   -> uma CTA em "**[COLCHETES MAIUSCULOS]**"; e um P.S. com o WhatsApp dos consultores DEPOIS da assinatura.
+- Regra de ouro: sempre ha texto de reforco e a assinatura da Estrategia APOS o CTA. Nunca finalize a mensagem no botao.
 `;
 
 // Descobre o tipo da peca a partir do texto (para orientar a CTA).
@@ -130,11 +140,21 @@ async function gerarCorpoEmail(
     `- Abrangencia: ${capa?.abrangencia ?? ""}`,
   ].join("\n");
 
-  // Retry com backoff: a API pode falhar por "connection error" transitorio.
+  const texto = await chamarLLM(client, systemPrompt, userPrompt);
+  return parseCorpo(texto);
+}
+
+// Chamada generica ao modelo com retry/backoff. Devolve o texto concatenado.
+async function chamarLLM(
+  client: NonNullable<ReturnType<typeof getAnthropic>>,
+  systemPrompt: string,
+  userPrompt: string,
+  maxTokens = 4000
+): Promise<string> {
   const criar = () =>
     client.messages.create({
       model: ANTHROPIC_MODEL,
-      max_tokens: 4000,
+      max_tokens: maxTokens,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });
@@ -153,13 +173,221 @@ async function gerarCorpoEmail(
   }
   if (!resposta) throw ultimoErro instanceof Error ? ultimoErro : new Error("falha na API");
 
-  const texto = resposta.content
+  return resposta.content
     .filter((b): b is { type: "text"; text: string } => b.type === "text")
     .map((b) => b.text)
     .join("\n")
     .trim();
+}
 
-  return parseCorpo(texto);
+// Extrai o primeiro objeto JSON da resposta do modelo (tolerante a ```json```).
+function parseJsonObjeto<T = Record<string, unknown>>(texto: string): T {
+  const limpo = texto.replace(/```json/gi, "").replace(/```/g, "").trim();
+  const ini = limpo.indexOf("{");
+  const fim = limpo.lastIndexOf("}");
+  if (ini >= 0 && fim > ini) {
+    return JSON.parse(limpo.slice(ini, fim + 1)) as T;
+  }
+  throw new Error("resposta do modelo não contém um objeto JSON válido");
+}
+
+// Normaliza um campo do JSON para lista de strings (aceita string ou array).
+function comoLista(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map((x) => (typeof x === "string" ? x : String(x ?? "")));
+  if (typeof v === "string") return v.split(/\r?\n/);
+  if (v == null) return [];
+  return [String(v)];
+}
+
+// Extrai um bloco de HTML autocontido da resposta do modelo.
+function parseHtml(texto: string): string {
+  let limpo = texto.replace(/```html/gi, "").replace(/```/g, "").trim();
+  const ini = limpo.search(/<!doctype html|<html/i);
+  if (ini > 0) limpo = limpo.slice(ini);
+  return limpo.trim();
+}
+
+// Detecta se o formato do anuncio pede roteiro de video.
+function ehVideo(formato: string): boolean {
+  const f = (formato || "").toLowerCase();
+  return (
+    f.includes("vídeo") ||
+    f.includes("video") ||
+    f.includes("google first") ||
+    f.includes("meta first")
+  );
+}
+
+// Monta o bloco de contexto da campanha (reutilizado em varios prompts).
+function contextoCampanha(capa: CampanhaEstruturada["capa"]): string {
+  return [
+    "CONTEXTO DA CAMPANHA (capa):",
+    `- Campanha: ${capa?.campanha ?? ""}`,
+    `- Concurso: ${capa?.concurso ?? ""}`,
+    `- Orgao: ${capa?.orgao ?? ""}`,
+    `- Situacao: ${capa?.situacao ?? ""}`,
+    `- Banca: ${capa?.banca ?? ""}`,
+    `- Vagas: ${capa?.vagas ?? ""}`,
+    `- Salario: ${capa?.salario ?? ""}`,
+    `- Escolaridade: ${capa?.escolaridade ?? ""}`,
+    `- Carrinho: ${capa?.carrinho ?? ""}`,
+    `- Cupom: ${capa?.cupom ?? ""}`,
+    `- Oferta: ${capa?.oferta ?? ""}`,
+    `- Abrangencia: ${capa?.abrangencia ?? ""}`,
+  ].join("\n");
+}
+
+// ===== Anuncio ESTATICO — gera o conteudo (JSON) e renderiza o .docx =====
+async function gerarAnuncioEstatico(
+  client: NonNullable<ReturnType<typeof getAnthropic>>,
+  systemPrompt: string,
+  anuncio: CampanhaEstruturada["anuncios"][number],
+  capa: CampanhaEstruturada["capa"],
+  nomeCampanha: string
+): Promise<Buffer> {
+  const userPrompt = [
+    "Escreva um ANÚNCIO ESTÁTICO (Meta Ads) para a campanha. Responda SOMENTE com um objeto JSON com as chaves:",
+    '{ "titulo1": "string curta", "titulo2": "string curta", "textoMeta": ["paragrafo", "..."], "laminas": [{ "lamina": "1", "copy": "texto da arte", "arte": "referencia visual" }], "legenda": ["linha com emojis", "..."] }',
+    "Use 3 a 5 laminas. Use **negrito** e _italico_ na marcacao inline quando fizer sentido. Escreva em PT-BR.",
+    "",
+    "DADOS DO ANÚNCIO:",
+    `- Objetivo: ${anuncio.objetivo ?? ""}`,
+    `- Formato: ${anuncio.formato ?? ""}`,
+    `- Angulo: ${anuncio.angulo ?? ""}`,
+    `- Publico: ${anuncio.publico ?? ""}`,
+    "",
+    contextoCampanha(capa),
+  ].join("\n");
+
+  const texto = await chamarLLM(client, systemPrompt, userPrompt);
+  const j = parseJsonObjeto<{
+    titulo1?: string;
+    titulo2?: string;
+    textoMeta?: unknown;
+    laminas?: unknown;
+    legenda?: unknown;
+  }>(texto);
+
+  const laminas = Array.isArray(j.laminas)
+    ? (j.laminas as Record<string, unknown>[]).map((r) => ({
+        lamina: String(r?.lamina ?? ""),
+        copy: String(r?.copy ?? ""),
+        arte: String(r?.arte ?? ""),
+      }))
+    : [];
+
+  return renderAnuncioEstaticoDocx({
+    campanha: nomeCampanha,
+    nome: `${anuncio.formato || "Estático"} — ${anuncio.angulo || ""}`.trim(),
+    titulo1: String(j.titulo1 ?? ""),
+    titulo2: String(j.titulo2 ?? ""),
+    textoMeta: comoLista(j.textoMeta),
+    laminas,
+    legenda: comoLista(j.legenda),
+  });
+}
+
+// ===== Anuncio VIDEO — gera o roteiro (JSON) e renderiza o .docx =====
+async function gerarAnuncioVideo(
+  client: NonNullable<ReturnType<typeof getAnthropic>>,
+  systemPrompt: string,
+  anuncio: CampanhaEstruturada["anuncios"][number],
+  capa: CampanhaEstruturada["capa"],
+  nomeCampanha: string
+): Promise<Buffer> {
+  const userPrompt = [
+    "Escreva um ROTEIRO DE VÍDEO (anúncio) para a campanha. Responda SOMENTE com um objeto JSON com as chaves:",
+    '{ "longo": ["linha do roteiro ~1 min"], "curto": ["linha do roteiro ~15 seg"], "legendaEmoji": ["linha"], "legendaSem": ["linha"], "titulo1": "string curta", "titulo2": "string curta" }',
+    "No roteiro, marque **PRINT** onde entra uma tela/print e **CTA** na chamada para ação. Use **negrito**/_italico_ inline. Escreva em PT-BR.",
+    "",
+    "DADOS DO ANÚNCIO:",
+    `- Objetivo: ${anuncio.objetivo ?? ""}`,
+    `- Formato: ${anuncio.formato ?? ""}`,
+    `- Angulo: ${anuncio.angulo ?? ""}`,
+    `- Publico: ${anuncio.publico ?? ""}`,
+    "",
+    contextoCampanha(capa),
+  ].join("\n");
+
+  const texto = await chamarLLM(client, systemPrompt, userPrompt);
+  const j = parseJsonObjeto<{
+    longo?: unknown;
+    curto?: unknown;
+    legendaEmoji?: unknown;
+    legendaSem?: unknown;
+    titulo1?: string;
+    titulo2?: string;
+  }>(texto);
+
+  return renderAnuncioVideoDocx({
+    campanha: nomeCampanha,
+    nome: `${anuncio.formato || "Vídeo"} — ${anuncio.angulo || ""}`.trim(),
+    longo: comoLista(j.longo),
+    curto: comoLista(j.curto),
+    legendaEmoji: comoLista(j.legendaEmoji),
+    legendaSem: comoLista(j.legendaSem),
+    titulo1: String(j.titulo1 ?? ""),
+    titulo2: String(j.titulo2 ?? ""),
+  });
+}
+
+// ===== Descricao de YouTube — gera JSON e renderiza o .docx =====
+async function gerarYoutube(
+  client: NonNullable<ReturnType<typeof getAnthropic>>,
+  systemPrompt: string,
+  fase: string,
+  capa: CampanhaEstruturada["capa"]
+): Promise<Buffer> {
+  const userPrompt = [
+    `Escreva a DESCRIÇÃO de um vídeo de YouTube para a fase "${fase}" da campanha. Responda SOMENTE com um objeto JSON com as chaves:`,
+    '{ "titulo": ["opcao de titulo do video"], "corpo": ["paragrafo da descricao", "..."], "hashtags": "#tag1 #tag2 #tag3" }',
+    "Inclua CTA e (quando fizer sentido) menção ao cupom/link. Use **negrito**/_italico_ inline. Escreva em PT-BR.",
+    "",
+    contextoCampanha(capa),
+  ].join("\n");
+
+  const texto = await chamarLLM(client, systemPrompt, userPrompt);
+  const j = parseJsonObjeto<{ titulo?: unknown; corpo?: unknown; hashtags?: string }>(texto);
+
+  return renderYoutubeDocx({
+    titulo: comoLista(j.titulo),
+    corpo: comoLista(j.corpo),
+    hashtags: String(j.hashtags ?? ""),
+  });
+}
+
+// ===== Pagina HTML autocontida — gera o HTML direto do modelo =====
+async function gerarPaginaHtml(
+  client: NonNullable<ReturnType<typeof getAnthropic>>,
+  systemPrompt: string,
+  tipo: "landing" | "sucesso" | "vendas",
+  capa: CampanhaEstruturada["capa"]
+): Promise<string> {
+  const descricoes: Record<typeof tipo, string> = {
+    landing:
+      "LANDING PAGE de captação: headline forte, subheadline, benefícios do evento gratuito, FORM com campos Nome, E-mail e WhatsApp (action=[INSERIR_URL_DO_FORM]), data/hora do 1º evento e CTA de inscrição.",
+    sucesso:
+      "PÁGINA DE SUCESSO: confirmação da inscrição, convite para entrar no Grupo VIP do WhatsApp (link [INSERIR_LINK_GRUPO_VIP]), lembrete do 1º evento (data/hora) e próximos passos.",
+    vendas:
+      "PÁGINA DE VENDAS: oferta completa, cupom (use [INSERIR_CUPOM] e o cupom da capa), botão de checkout ([INSERIR_URL_CHECKOUT]), bônus = 3 mentorias, o SQ (Sistema de Questões) como FERRAMENTA JÁ INCLUSA (nunca como bônus), prova social histórica/da área, garantia de 7 dias, acesso de 12 meses e um FAQ.",
+  };
+
+  const userPrompt = [
+    "Gere uma página web COMPLETA e AUTOCONTIDA em HTML para a campanha.",
+    "REQUISITOS TÉCNICOS:",
+    "- Responda SOMENTE com o HTML (comece em <!doctype html>). Sem comentários fora do HTML, sem ```.",
+    "- CSS inline no <head> (<style>), responsivo (mobile-first), sem dependências externas.",
+    "- PT-BR. Use placeholders operacionais entre colchetes quando faltar dado (ex.: [INSERIR_URL_DO_FORM], [INSERIR_LINK_GRUPO_VIP], [INSERIR_URL_CHECKOUT], [INSERIR_CUPOM]).",
+    "",
+    `TIPO DE PÁGINA: ${descricoes[tipo]}`,
+    "",
+    "GUARDRAILS DE OFERTA: SQ é ferramenta inclusa (não bônus); único bônus = 3 mentorias; garantia 7 dias; acesso/SQ 12 meses; prova social histórica/da área (nunca inventar aprovado do concurso-alvo).",
+    "",
+    contextoCampanha(capa),
+  ].join("\n");
+
+  const texto = await chamarLLM(client, systemPrompt, userPrompt, 8000);
+  return parseHtml(texto);
 }
 
 // Executa tarefas com concorrencia limitada (pool simples).
@@ -207,6 +435,7 @@ export async function POST(req: NextRequest) {
   const nomeCampanha = capa?.campanha || campanha.nomeEscolhido || "Campanha";
   const disparos = Array.isArray(campanha.disparos) ? campanha.disparos : [];
   const whatsapp = Array.isArray(campanha.whatsappGrupos) ? campanha.whatsappGrupos : [];
+  const anuncios = Array.isArray(campanha.anuncios) ? campanha.anuncios : [];
 
   // Monta o system prompt (cerebro + guardrails + regras de template).
   const cerebro = await getKnowledge();
@@ -253,7 +482,7 @@ export async function POST(req: NextRequest) {
     const corpo = corpos[i];
     if (!corpo) continue; // erro ja registrado
     const ordem = String(i + 1).padStart(2, "0");
-    const nomeArquivo = `${ordem} - ${nomeSeguro(disparo.peca || "E-mail")}.docx`;
+    const nomeArquivo = `emails/${ordem} - ${nomeSeguro(disparo.peca || "E-mail")}.docx`;
     try {
       const buffer = await renderEmailDocx({
         campanha: nomeCampanha,
@@ -277,7 +506,7 @@ export async function POST(req: NextRequest) {
   for (let i = 0; i < whatsapp.length; i++) {
     const w = whatsapp[i];
     const corpo = (w.mensagem || "").split(/\r?\n/);
-    const nomeArquivo = `WhatsApp Grupo - ${nomeSeguro(w.assunto || `Mensagem ${i + 1}`)}.docx`;
+    const nomeArquivo = `whatsapp/WhatsApp Grupo - ${nomeSeguro(w.assunto || `Mensagem ${i + 1}`)}.docx`;
     try {
       const buffer = await renderEmailDocx({
         campanha: nomeCampanha,
@@ -295,6 +524,69 @@ export async function POST(req: NextRequest) {
       const msg = e instanceof Error ? e.message : "erro desconhecido";
       erros.push(`WhatsApp #${i + 1} (${w.assunto ?? "sem assunto"}): ${msg}`);
     }
+  }
+
+  // ===== Anuncios — 1 chamada LLM por item (video vs estatico), concorrencia 4 =====
+  const anunciosBuf: (Buffer | null)[] = new Array(anuncios.length).fill(null);
+  await comConcorrencia(anuncios, 4, async (anuncio, i) => {
+    try {
+      anunciosBuf[i] = ehVideo(anuncio.formato)
+        ? await gerarAnuncioVideo(client, systemPrompt, anuncio, capa, nomeCampanha)
+        : await gerarAnuncioEstatico(client, systemPrompt, anuncio, capa, nomeCampanha);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "erro desconhecido";
+      anunciosBuf[i] = null;
+      erros.push(
+        `Anúncio #${String(i + 1).padStart(2, "0")} (${anuncio.formato ?? "sem formato"}): ${msg}`
+      );
+    }
+  });
+  for (let i = 0; i < anuncios.length; i++) {
+    const buf = anunciosBuf[i];
+    if (!buf) continue; // erro ja registrado
+    const ordem = String(i + 1).padStart(2, "0");
+    const nome = nomeSeguro(`${anuncios[i].formato || "Anuncio"} - ${anuncios[i].angulo || ""}`);
+    zip.file(`anuncios/${ordem} - ${nome}.docx`, buf);
+  }
+
+  // ===== YouTube — 3 descricoes (fases), concorrencia 4 =====
+  const fasesYoutube = ["Pré-lançamento", "Promoção", "Último dia"];
+  const youtubeBuf: (Buffer | null)[] = new Array(fasesYoutube.length).fill(null);
+  await comConcorrencia(fasesYoutube, 4, async (fase, i) => {
+    try {
+      youtubeBuf[i] = await gerarYoutube(client, systemPrompt, fase, capa);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "erro desconhecido";
+      youtubeBuf[i] = null;
+      erros.push(`YouTube (${fase}): ${msg}`);
+    }
+  });
+  for (let i = 0; i < fasesYoutube.length; i++) {
+    const buf = youtubeBuf[i];
+    if (!buf) continue;
+    zip.file(`youtube/Descricao YouTube - ${nomeSeguro(fasesYoutube[i])}.docx`, buf);
+  }
+
+  // ===== Paginas — 3 HTML autocontidos, concorrencia 4 =====
+  const paginas: { tipo: "landing" | "sucesso" | "vendas"; arquivo: string; rotulo: string }[] = [
+    { tipo: "landing", arquivo: "landing-page.html", rotulo: "Landing Page" },
+    { tipo: "sucesso", arquivo: "pagina-de-sucesso.html", rotulo: "Página de Sucesso" },
+    { tipo: "vendas", arquivo: "pagina-de-vendas.html", rotulo: "Página de Vendas" },
+  ];
+  const paginasHtml: (string | null)[] = new Array(paginas.length).fill(null);
+  await comConcorrencia(paginas, 4, async (p, i) => {
+    try {
+      paginasHtml[i] = await gerarPaginaHtml(client, systemPrompt, p.tipo, capa);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "erro desconhecido";
+      paginasHtml[i] = null;
+      erros.push(`Página (${p.rotulo}): ${msg}`);
+    }
+  });
+  for (let i = 0; i < paginas.length; i++) {
+    const html = paginasHtml[i];
+    if (!html) continue;
+    zip.file(`paginas/${paginas[i].arquivo}`, html);
   }
 
   // Se houve erros, inclui um arquivo _erros.txt em vez de quebrar tudo.
@@ -324,7 +616,7 @@ export async function POST(req: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": "application/zip",
-        "Content-Disposition": 'attachment; filename="copies.docx.zip"',
+        "Content-Disposition": 'attachment; filename="copies-completas.zip"',
       },
     });
   } catch (e) {
