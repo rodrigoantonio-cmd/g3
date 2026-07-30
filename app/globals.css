@@ -14,6 +14,11 @@
   box-sizing: border-box;
 }
 
+/* Evita barra de rolagem horizontal causada pelo full-bleed (100vw). */
+html {
+  overflow-x: hidden;
+}
+
 html,
 body {
   margin: 0;
@@ -191,4 +196,76 @@ pre.bloco {
   color: var(--cor-suave);
   font-size: 13px;
   margin-top: 24px;
+}
+
+/* ============================================================
+   Etapa da PLANILHA EDITÁVEL e página [id]: largura cheia.
+   O layout global usa .container (max-width 820px, centrado).
+   .full-bleed quebra esse limite e aproveita quase todo o
+   viewport no desktop, mantendo um respiro lateral.
+   ============================================================ */
+.full-bleed {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  padding-left: 28px;
+  padding-right: 28px;
+}
+
+/* Wrapper de cada tabela: fallback de rolagem para nunca esconder
+   conteúdo em telas menores. */
+.tabela-wrap {
+  overflow-x: auto;
+  width: 100%;
+}
+
+/* Tabela editável da planilha: usa todo o espaço disponível. */
+.tabela-editavel {
+  width: 100%;
+  table-layout: auto;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.tabela-editavel th {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 2px solid var(--cor-borda);
+  white-space: nowrap;
+  color: var(--cor-suave);
+  font-weight: 600;
+  vertical-align: bottom;
+}
+
+.tabela-editavel td {
+  padding: 6px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--cor-borda);
+}
+
+/* Zebra para facilitar a leitura das linhas. */
+.tabela-editavel tbody tr:nth-child(even) {
+  background: #f7f9fb;
+}
+
+/* Campos dentro das células ocupam toda a largura da coluna. */
+.tabela-editavel input,
+.tabela-editavel textarea {
+  width: 100%;
+  font-size: 13px;
+  padding: 6px 8px;
+}
+
+/* Textareas das células: quebram linha e mostram tudo (auto-grow via JS). */
+.tabela-editavel textarea {
+  min-height: 38px;
+  line-height: 1.4;
+  resize: vertical;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Botão de remover linha compacto. */
+.tabela-editavel .btn-remover {
+  padding: 6px 10px;
 }

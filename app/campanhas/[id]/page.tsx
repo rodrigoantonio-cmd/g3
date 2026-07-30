@@ -177,7 +177,7 @@ export default function CampanhaDetalhePage() {
       {carregando && <p>Carregando...</p>}
 
       {!carregando && estrutura && (
-        <>
+        <div className="full-bleed">
           <EditorEstrutura value={estrutura} onChange={setEstrutura} />
 
           <p style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
@@ -196,7 +196,7 @@ export default function CampanhaDetalhePage() {
               {regenerando ? "Regenerando..." : "Regenerar copies impactadas"}
             </button>
           </p>
-        </>
+        </div>
       )}
     </div>
   );

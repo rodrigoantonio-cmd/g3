@@ -5,15 +5,19 @@
 // CampanhaEstruturada a cada edicao (capa, disparos, anuncios, oferta,
 // programacao, mentorias, whatsappGrupos).
 //
-// A logica de tabelas espelha a do wizard (app/campanhas/nova/page.tsx). Aqui
-// ela vive como componente reutilizavel para a pagina de reabrir/editar uma
-// campanha salva (app/campanhas/[id]/page.tsx).
+// Este componente e a UNICA fonte da planilha editavel: o wizard
+// (app/campanhas/nova/page.tsx, etapa 3) e a pagina de reabrir/editar
+// (app/campanhas/[id]/page.tsx) usam os dois este mesmo editor, garantindo
+// visual identico (largura cheia + textareas que mostram tudo).
 
+import { useLayoutEffect, useRef } from "react";
 import type { CampanhaEstruturada } from "@/lib/types";
 
 // ---- Tipos auxiliares para as tabelas editaveis ----
 type Linha = Record<string, string>;
-type Coluna = { key: string; label: string; wide?: boolean };
+// long  -> renderiza <textarea> (texto longo, quebra de linha, auto-crescimento)
+// min   -> largura minima da coluna em px (dica para telas largas)
+type Coluna = { key: string; label: string; long?: boolean; min?: number };
 
 // Chaves de blocos da estrutura que viram tabelas (arrays de linhas).
 type BlocoArray =
@@ -25,49 +29,51 @@ type BlocoArray =
   | "whatsappGrupos";
 
 // Colunas de cada bloco (ordem = ordem de exibicao).
+// Campos curtos (data, hora, nº, cupom) ficam estreitos; campos de texto
+// longo (assunto, base, mensagem, etc.) viram textarea larga.
 const COLUNAS: Record<BlocoArray, Coluna[]> = {
   disparos: [
-    { key: "fase", label: "Fase" },
-    { key: "peca", label: "Peça" },
-    { key: "data", label: "Data" },
-    { key: "hora", label: "Hora" },
-    { key: "base", label: "Base" },
-    { key: "excluir", label: "Excluir" },
-    { key: "assunto", label: "Assunto", wide: true },
-    { key: "preHeader", label: "Pré-header", wide: true },
+    { key: "fase", label: "Fase", min: 130 },
+    { key: "peca", label: "Peça", min: 140 },
+    { key: "data", label: "Data", min: 100 },
+    { key: "hora", label: "Hora", min: 80 },
+    { key: "base", label: "Base", long: true, min: 200 },
+    { key: "excluir", label: "Excluir", long: true, min: 170 },
+    { key: "assunto", label: "Assunto", long: true, min: 280 },
+    { key: "preHeader", label: "Pré-header", long: true, min: 240 },
   ],
   anuncios: [
-    { key: "objetivo", label: "Objetivo" },
-    { key: "formato", label: "Formato" },
-    { key: "angulo", label: "Ângulo", wide: true },
-    { key: "publico", label: "Público", wide: true },
+    { key: "objetivo", label: "Objetivo", min: 140 },
+    { key: "formato", label: "Formato", min: 140 },
+    { key: "angulo", label: "Ângulo", long: true, min: 280 },
+    { key: "publico", label: "Público", long: true, min: 240 },
   ],
   oferta: [
-    { key: "periodo", label: "Período" },
-    { key: "produtos", label: "Produtos", wide: true },
-    { key: "promocao", label: "Promoção" },
-    { key: "bonus", label: "Bônus" },
-    { key: "cupom", label: "Cupom" },
+    { key: "periodo", label: "Período", min: 130 },
+    { key: "produtos", label: "Produtos", long: true, min: 280 },
+    { key: "promocao", label: "Promoção", long: true, min: 220 },
+    { key: "bonus", label: "Bônus", long: true, min: 200 },
+    { key: "cupom", label: "Cupom", min: 110 },
   ],
   programacao: [
-    { key: "data", label: "Data" },
-    { key: "hora", label: "Hora" },
-    { key: "professor", label: "Professor" },
-    { key: "evento", label: "Evento" },
-    { key: "conteudo", label: "Conteúdo", wide: true },
+    { key: "data", label: "Data", min: 100 },
+    { key: "hora", label: "Hora", min: 80 },
+    { key: "professor", label: "Professor", min: 160 },
+    { key: "evento", label: "Evento", min: 160 },
+    { key: "conteudo", label: "Conteúdo", long: true, min: 320 },
   ],
   mentorias: [
-    { key: "data", label: "Data" },
-    { key: "hora", label: "Hora" },
-    { key: "professor", label: "Professor" },
-    { key: "tema", label: "Tema", wide: true },
+    { key: "data", label: "Data", min: 100 },
+    { key: "hora", label: "Hora", min: 80 },
+    { key: "professor", label: "Professor", min: 160 },
+    { key: "tema", label: "Tema", long: true, min: 320 },
   ],
   whatsappGrupos: [
-    { key: "data", label: "Data" },
-    { key: "hora", label: "Hora" },
-    { key: "fase", label: "Fase" },
-    { key: "assunto", label: "Assunto" },
-    { key: "mensagem", label: "Mensagem", wide: true },
+    { key: "data", label: "Data", min: 100 },
+    { key: "hora", label: "Hora", min: 80 },
+    { key: "fase", label: "Fase", min: 130 },
+    { key: "assunto", label: "Assunto", long: true, min: 220 },
+    { key: "mensagem", label: "Mensagem", long: true, min: 360 },
   ],
 };
 
@@ -95,6 +101,40 @@ const CAPA_LABELS: Record<string, string> = {
   oferta: "Oferta",
   abrangencia: "Abrangência",
 };
+
+// ---- Textarea que cresce em altura conforme o conteudo ----
+// Ajusta a altura para scrollHeight no mount e a cada mudanca de valor,
+// para que nada fique escondido/cortado.
+function AutoTextarea({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      rows={1}
+      onChange={(e) => onChange(e.target.value)}
+      onInput={(e) => {
+        const el = e.currentTarget;
+        el.style.height = "auto";
+        el.style.height = `${el.scrollHeight}px`;
+      }}
+    />
+  );
+}
 
 export default function EditorEstrutura({
   value,
@@ -153,32 +193,16 @@ export default function EditorEstrutura({
         return (
           <div className="card" key={bloco}>
             <h2 style={{ marginTop: 0 }}>{TITULOS[bloco]}</h2>
-            <div style={{ overflowX: "auto" }}>
-              <table
-                style={{
-                  borderCollapse: "collapse",
-                  width: "100%",
-                  fontSize: 13,
-                }}
-              >
+            <div className="tabela-wrap">
+              <table className="tabela-editavel">
                 <thead>
                   <tr>
                     {cols.map((c) => (
-                      <th
-                        key={c.key}
-                        style={{
-                          textAlign: "left",
-                          padding: "6px 8px",
-                          borderBottom: "1px solid var(--cor-borda)",
-                          whiteSpace: "nowrap",
-                          color: "var(--cor-suave)",
-                          fontWeight: 600,
-                        }}
-                      >
+                      <th key={c.key} style={{ minWidth: c.min }}>
                         {c.label}
                       </th>
                     ))}
-                    <th style={{ padding: "6px 8px" }} />
+                    <th style={{ width: 44 }} />
                   </tr>
                 </thead>
                 <tbody>
@@ -186,7 +210,7 @@ export default function EditorEstrutura({
                     <tr>
                       <td
                         colSpan={cols.length + 1}
-                        style={{ padding: "8px", color: "var(--cor-suave)" }}
+                        style={{ color: "var(--cor-suave)" }}
                       >
                         Nenhuma linha. Use “＋ linha” para adicionar.
                       </td>
@@ -195,21 +219,11 @@ export default function EditorEstrutura({
                   {linhas.map((linha, i) => (
                     <tr key={i}>
                       {cols.map((c) => (
-                        <td
-                          key={c.key}
-                          style={{
-                            padding: "4px 6px",
-                            verticalAlign: "top",
-                            minWidth: c.wide ? 220 : 110,
-                          }}
-                        >
-                          {c.wide ? (
-                            <textarea
+                        <td key={c.key} style={{ minWidth: c.min }}>
+                          {c.long ? (
+                            <AutoTextarea
                               value={linha[c.key] ?? ""}
-                              onChange={(e) =>
-                                atualizarCelula(bloco, i, c.key, e.target.value)
-                              }
-                              style={{ minHeight: 44, fontSize: 13, padding: "6px 8px" }}
+                              onChange={(v) => atualizarCelula(bloco, i, c.key, v)}
                             />
                           ) : (
                             <input
@@ -217,18 +231,16 @@ export default function EditorEstrutura({
                               onChange={(e) =>
                                 atualizarCelula(bloco, i, c.key, e.target.value)
                               }
-                              style={{ fontSize: 13, padding: "6px 8px" }}
                             />
                           )}
                         </td>
                       ))}
-                      <td style={{ padding: "4px 6px", verticalAlign: "top" }}>
+                      <td>
                         <button
                           type="button"
-                          className="botao-secundario"
+                          className="botao-secundario btn-remover"
                           onClick={() => removerLinha(bloco, i)}
                           title="Remover linha"
-                          style={{ padding: "6px 10px" }}
                         >
                           🗑
                         </button>
