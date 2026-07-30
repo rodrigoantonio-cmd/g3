@@ -45,6 +45,7 @@ export interface CampanhaEstruturada {
     cupom: string;
     oferta: string;
     abrangencia: string;
+    paleta?: string; // paleta da identidade visual (texto livre / HEX + onde usar)
   };
   disparos: {
     fase: "Captação" | "Ao vivo" | "Vendas";

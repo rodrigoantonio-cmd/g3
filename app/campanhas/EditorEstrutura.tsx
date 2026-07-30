@@ -100,6 +100,7 @@ const CAPA_LABELS: Record<string, string> = {
   cupom: "Cupom",
   oferta: "Oferta",
   abrangencia: "Abrangência",
+  paleta: "Paleta",
 };
 
 // ---- Textarea que cresce em altura conforme o conteudo ----
@@ -174,16 +175,25 @@ export default function EditorEstrutura({
           Edite os campos livremente. As mudanças entram na planilha e nas copies.
         </p>
         <div className="linha" style={{ gap: 16 }}>
-          {Object.keys(value.capa).map((key) => (
-            <div key={key} style={{ flex: "1 1 240px" }}>
-              <label htmlFor={`capa-${key}`}>{CAPA_LABELS[key] ?? key}</label>
-              <input
-                id={`capa-${key}`}
-                value={(value.capa as unknown as Linha)[key] ?? ""}
-                onChange={(e) => atualizarCapa(key, e.target.value)}
-              />
-            </div>
-          ))}
+          {Object.keys(value.capa)
+            .filter((key) => key !== "paleta")
+            .map((key) => (
+              <div key={key} style={{ flex: "1 1 240px" }}>
+                <label htmlFor={`capa-${key}`}>{CAPA_LABELS[key] ?? key}</label>
+                <input
+                  id={`capa-${key}`}
+                  value={(value.capa as unknown as Linha)[key] ?? ""}
+                  onChange={(e) => atualizarCapa(key, e.target.value)}
+                />
+              </div>
+            ))}
+        </div>
+        <div style={{ marginTop: 16 }}>
+          <label htmlFor="capa-paleta">{CAPA_LABELS.paleta}</label>
+          <AutoTextarea
+            value={value.capa.paleta ?? ""}
+            onChange={(v) => atualizarCapa("paleta", v)}
+          />
         </div>
       </div>
 

@@ -59,7 +59,8 @@ const FORMATO_JSON = `{
   "capa": {
     "campanha": "...", "concurso": "...", "orgao": "...", "situacao": "...",
     "banca": "...", "vagas": "...", "salario": "...", "escolaridade": "...",
-    "carrinho": "...", "cupom": "...", "oferta": "...", "abrangencia": "..."
+    "carrinho": "...", "cupom": "...", "oferta": "...", "abrangencia": "...",
+    "paleta": "..."
   },
   "disparos": [
     { "fase": "Captação|Ao vivo|Vendas", "peca": "...", "data": "...", "hora": "...", "base": "...", "excluir": "...", "assunto": "...", "preHeader": "..." }
@@ -221,6 +222,7 @@ export async function POST(req: NextRequest) {
     "- nomeEscolhido: use exatamente a Big Idea escolhida (acima).",
     "- resumo: use exatamente o resumo fornecido.",
     "- capa: preencha todos os campos com base no briefing e no cerebro (campanha = nomeEscolhido).",
+    "- capa.paleta: proponha uma paleta de cores COERENTE com a identidade visual do concurso/orgao. Informe as cores em HEX e ONDE usar cada uma (fundo, destaques/numeros, CTA, texto). Mantenha os padroes do framework: dourado para o que e premium/numeros de destaque; use vermelho SOMENTE se for parte da identidade do orgao/concurso. Se o briefing nao indicar cores, proponha uma paleta sobria e legivel.",
     "- disparos: cronograma de e-mails/WhatsApp API por fase (Captação, Ao vivo, Vendas). Seja completo e realista.",
     "- anuncios: pecas de midia paga por objetivo (Captação e Vendas).",
     "- oferta: linhas com periodo, produtos, promocao, bonus (mentorias) e cupom.",

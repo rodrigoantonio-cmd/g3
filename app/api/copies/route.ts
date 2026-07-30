@@ -358,6 +358,19 @@ async function gerarYoutube(
   });
 }
 
+// Monta o bloco de PALETA da campanha para os prompts de pagina.
+// Quando a capa tem paleta definida, o modelo deve usar ESTRITAMENTE essas
+// cores no CSS. Sem paleta, devolve "" (mantem o comportamento atual: deriva
+// do framework).
+function blocoPaleta(capa: CampanhaEstruturada["capa"]): string {
+  const paleta = (capa?.paleta ?? "").trim();
+  if (!paleta) return "";
+  return [
+    `PALETA DA CAMPANHA (use ESTRITAMENTE estas cores no CSS — fundos, textos, destaques, CTAs): ${paleta}.`,
+    "Não introduza cores fora desta paleta (exceto neutros de leitura).",
+  ].join("\n");
+}
+
 // ===== Pagina HTML autocontida — gera o HTML direto do modelo =====
 async function gerarPaginaHtml(
   client: NonNullable<ReturnType<typeof getAnthropic>>,
@@ -391,6 +404,7 @@ async function gerarPaginaHtml(
     `TIPO DE PÁGINA: ${descricoes[tipo]}`,
     "",
     "GUARDRAILS DE OFERTA: SQ é ferramenta inclusa (não bônus); único bônus = 3 mentorias; garantia 7 dias; acesso/SQ 12 meses; prova social histórica/da área (nunca inventar aprovado do concurso-alvo).",
+    ...(blocoPaleta(capa) ? ["", blocoPaleta(capa)] : []),
     "",
     contextoCampanha(capa),
   ].join("\n");
@@ -470,6 +484,7 @@ async function gerarPaginaVendas(
     "- Mantenha o cálculo de preços coerente entre todas as seções de oferta.",
     "",
     "ESTRUTURA: siga EXATAMENTE a ordem de dobras do framework (faixa fixa → Hero → faixa de fatos → O momento → carreira → prova social → ecossistema → bônus [se houver] → ofertas [Assinatura e Pacote/Pacotaço] → comparação → professores → garantia → última chamada → ofertas resumidas → FAQ → footer).",
+    ...(blocoPaleta(capa) ? ["", blocoPaleta(capa)] : []),
     "",
     contextoCampanha(capa),
   ].join("\n");
