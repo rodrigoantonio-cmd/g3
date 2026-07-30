@@ -26,7 +26,6 @@ export default function RootLayout({
             <nav>
               <Link href="/campanhas">Campanhas</Link>
               <Link href="/campanhas/nova">Nova campanha</Link>
-              <Link href="/login">Entrar</Link>
             </nav>
           </div>
         </header>

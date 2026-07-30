@@ -1,4 +1,4 @@
-// Home: explica o app e leva para "Nova campanha" e login.
+// Home: explica o app e leva para "Nova campanha" (acesso aberto, sem login).
 
 import Link from "next/link";
 
@@ -14,7 +14,6 @@ export default function HomePage() {
       <div className="card">
         <h2>Como funciona</h2>
         <ol className="limpa">
-          <li>Voce entra com seu e-mail e senha.</li>
           <li>
             Cria uma campanha preenchendo um briefing simples (concurso,
             situacao, datas e oferta).
@@ -24,7 +23,10 @@ export default function HomePage() {
             funil e oferta) e a inteligencia da Claude para gerar as ideias de
             nome, o funil e um resumo.
           </li>
-          <li>Voce salva a campanha e consulta o historico quando quiser.</li>
+          <li>
+            Voce salva a campanha e consulta o historico compartilhado do time
+            quando quiser.
+          </li>
         </ol>
       </div>
 
@@ -34,8 +36,8 @@ export default function HomePage() {
           <Link className="botao" href="/campanhas/nova">
             Criar nova campanha
           </Link>{" "}
-          <Link className="botao botao-secundario" href="/login">
-            Entrar
+          <Link className="botao botao-secundario" href="/campanhas">
+            Ver campanhas do time
           </Link>
         </p>
         <p className="rodape">

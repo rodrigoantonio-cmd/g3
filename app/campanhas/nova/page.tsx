@@ -1,12 +1,11 @@
 "use client";
 
 // Formulario de briefing. Ao enviar, chama POST /api/generate e mostra o
-// resultado. O botao "Salvar campanha" grava no Supabase (se logado).
+// resultado. O botao "Salvar campanha" grava via POST /api/save (sem login);
+// o historico e compartilhado pelo time.
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { getSupabaseBrowser, supabaseConfigurado } from "@/lib/supabaseClient";
 import type { Briefing, CampanhaEstruturada, Situacao } from "@/lib/types";
 
 // A geracao pode devolver a campanha estruturada + um aviso opcional (stub).
@@ -28,7 +27,6 @@ const briefingVazio: Briefing = {
 };
 
 export default function NovaCampanhaPage() {
-  const router = useRouter();
   const [briefing, setBriefing] = useState<Briefing>(briefingVazio);
   const [resultado, setResultado] = useState<ResultadoGeracao | null>(null);
   const [gerando, setGerando] = useState(false);
@@ -151,22 +149,8 @@ export default function NovaCampanhaPage() {
     }
   }
 
-  // Transforma erros do Supabase (RLS/sessao) em mensagens claras.
-  function mensagemDeErro(err: unknown): string {
-    const e = err as { message?: string; code?: string } | null;
-    const msg = e?.message ?? "";
-    const code = e?.code ?? "";
-    // 42501 = violacao de RLS; JWT expirado/ausente = sessao invalida.
-    if (code === "42501" || /row-level security|violates row-level/i.test(msg)) {
-      return "Sem permissao para salvar (RLS). Confirme que voce esta logado com a conta certa e tente novamente.";
-    }
-    if (/jwt|token|session|not authenticated|auth/i.test(msg)) {
-      return "Sua sessao expirou. Entre novamente para salvar a campanha.";
-    }
-    return msg || "Falha ao salvar a campanha.";
-  }
-
-  // Salva a campanha, o briefing e a campanha estruturada no Supabase.
+  // Salva a campanha via POST /api/save (sem login: acesso aberto).
+  // O servidor grava com o service role e user_id = null (historico do time).
   async function salvar() {
     setErro(null);
     setOkSalvar(null);
@@ -174,64 +158,25 @@ export default function NovaCampanhaPage() {
 
     if (!resultado) return;
 
-    if (!supabaseConfigurado) {
-      setErro("Configure o Supabase (.env.local) para salvar. Veja o README.");
-      return;
-    }
-
     setSalvando(true);
     try {
-      const supabase = getSupabaseBrowser();
-      const {
-        data: { user },
-        error: errUser,
-      } = await supabase.auth.getUser();
+      const resp = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campanha: resultado, briefing }),
+      });
 
-      if (errUser || !user) {
-        // Sem sessao valida: manda o usuario logar.
-        router.push("/login");
-        return;
+      const dados = await resp.json();
+      if (!resp.ok) {
+        throw new Error(dados?.erro || "Falha ao salvar a campanha.");
       }
 
-      // Nome e concurso vem da campanha gerada (fonte-da-verdade), com
-      // fallback para o briefing caso algum campo venha vazio.
-      const nome = resultado.nomeEscolhido || resultado.capa?.campanha || briefing.concurso;
-      const concurso = resultado.capa?.concurso || briefing.concurso;
-
-      // 1) Cria a campanha (user_id = usuario logado, para satisfazer a RLS).
-      const { data: campanha, error: err1 } = await supabase
-        .from("campaigns")
-        .insert({
-          user_id: user.id,
-          nome,
-          concurso,
-          status: "gerada",
-        })
-        .select("id")
-        .single();
-
-      if (err1) throw err1;
-
-      // 2) Salva o briefing (JSON) ligado a campanha.
-      const { error: err2 } = await supabase.from("briefings").insert({
-        campaign_id: campanha.id,
-        dados: briefing,
-      });
-      if (err2) throw err2;
-
-      // 3) Salva a campanha estruturada completa como asset (JSON serializado).
-      const { error: err3 } = await supabase.from("assets").insert({
-        campaign_id: campanha.id,
-        tipo: "campanha_json",
-        nome,
-        conteudo: JSON.stringify(resultado),
-      });
-      if (err3) throw err3;
-
+      const nome =
+        resultado.nomeEscolhido || resultado.capa?.campanha || briefing.concurso;
       setOkSalvar(`Campanha "${nome}" salva com sucesso!`);
       setSalvo(true);
     } catch (err) {
-      setErro(mensagemDeErro(err));
+      setErro(err instanceof Error ? err.message : "Falha ao salvar a campanha.");
     } finally {
       setSalvando(false);
     }
@@ -251,7 +196,7 @@ export default function NovaCampanhaPage() {
           {salvo && (
             <>
               {" "}
-              <Link href="/campanhas">Ver minhas campanhas</Link>.
+              <Link href="/campanhas">Ver campanhas</Link>.
             </>
           )}
         </div>

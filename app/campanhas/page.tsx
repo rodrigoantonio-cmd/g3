@@ -1,55 +1,32 @@
 "use client";
 
-// Lista as campanhas do usuario logado (lidas do Supabase).
-// Client component: busca os dados no navegador com a sessao do usuario.
+// Lista o historico COMPARTILHADO do time (sem login).
+// Client component: busca os dados via GET /api/campanhas (service role no
+// servidor, que ignora a RLS e retorna todas as campanhas).
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getSupabaseBrowser, supabaseConfigurado } from "@/lib/supabaseClient";
 import type { Campaign } from "@/lib/types";
 
 export default function CampanhasPage() {
   const [campanhas, setCampanhas] = useState<Campaign[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
-  const [logado, setLogado] = useState<boolean | null>(null);
 
   useEffect(() => {
     async function carregar() {
-      if (!supabaseConfigurado) {
-        setErro(
-          "O Supabase ainda nao esta configurado. Preencha o .env.local (veja o README)."
-        );
+      try {
+        const resp = await fetch("/api/campanhas");
+        const dados = await resp.json();
+        if (!resp.ok) {
+          throw new Error(dados?.erro || "Falha ao carregar as campanhas.");
+        }
+        setCampanhas((dados?.campanhas ?? []) as Campaign[]);
+      } catch (err) {
+        setErro(err instanceof Error ? err.message : "Erro inesperado.");
+      } finally {
         setCarregando(false);
-        return;
       }
-
-      const supabase = getSupabaseBrowser();
-
-      // Verifica se ha usuario logado.
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        setLogado(false);
-        setCarregando(false);
-        return;
-      }
-      setLogado(true);
-
-      // Le as campanhas (a RLS garante que so vem as do proprio usuario).
-      const { data, error } = await supabase
-        .from("campaigns")
-        .select("id, user_id, nome, concurso, status, created_at")
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        setErro(error.message);
-      } else {
-        setCampanhas((data ?? []) as Campaign[]);
-      }
-      setCarregando(false);
     }
 
     carregar();
@@ -57,9 +34,9 @@ export default function CampanhasPage() {
 
   return (
     <div>
-      <h1>Minhas campanhas</h1>
+      <h1>Campanhas do time</h1>
       <p className="subtitulo">
-        Historico das campanhas que voce criou.{" "}
+        Historico compartilhado das campanhas criadas pelo time.{" "}
         <Link href="/campanhas/nova">Criar nova</Link>.
       </p>
 
@@ -67,18 +44,11 @@ export default function CampanhasPage() {
 
       {carregando && <p>Carregando...</p>}
 
-      {!carregando && logado === false && (
-        <div className="aviso">
-          Voce precisa <Link href="/login">entrar</Link> para ver suas
-          campanhas.
-        </div>
-      )}
-
-      {!carregando && logado && campanhas.length === 0 && !erro && (
+      {!carregando && campanhas.length === 0 && !erro && (
         <div className="card">
-          <p>Voce ainda nao tem campanhas.</p>
+          <p>Ainda nao ha campanhas salvas.</p>
           <Link className="botao" href="/campanhas/nova">
-            Criar minha primeira campanha
+            Criar a primeira campanha
           </Link>
         </div>
       )}
