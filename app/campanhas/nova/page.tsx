@@ -30,6 +30,16 @@ const briefingVazio: Briefing = {
 
 const TOTAL_ETAPAS = 5;
 
+// Categorias de copy — cada uma vira uma requisicao curta e separada a
+// /api/copies?categoria=X (evita estourar o tempo limite da funcao na Vercel).
+const CATEGORIAS_COPY = [
+  { id: "emails", rotulo: "📧 E-mails" },
+  { id: "whatsapp", rotulo: "💬 WhatsApp" },
+  { id: "anuncios", rotulo: "📢 Anúncios" },
+  { id: "youtube", rotulo: "▶️ YouTube" },
+  { id: "paginas", rotulo: "📄 Páginas (LP/vendas/sucesso)" },
+] as const;
+
 export default function NovaCampanhaPage() {
   // ---- Estado do wizard ----
   const [etapa, setEtapa] = useState(0);
@@ -47,7 +57,10 @@ export default function NovaCampanhaPage() {
   // ---- Flags de carregamento / mensagens ----
   const [carregando, setCarregando] = useState(false);
   const [baixando, setBaixando] = useState(false);
-  const [baixandoCopies, setBaixandoCopies] = useState(false);
+  // Guarda qual categoria de copy esta sendo gerada ("emails" | ... | "tudo"),
+  // ou null quando nada esta rodando. Usado para desabilitar os botoes e mostrar
+  // o "gerando..." no botao certo.
+  const [gerando, setGerando] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
@@ -177,32 +190,74 @@ export default function NovaCampanhaPage() {
     setEtapa(4);
   }
 
-  // ---- Baixar copies (.docx .zip) com a estrutura EDITADA ----
-  async function baixarCopies() {
-    if (!estrutura) return;
-    setErro(null);
-    setBaixandoCopies(true);
+  // ---- Gera UMA categoria de copy (requisicao curta) e baixa o zip. ----
+  // Nao mexe no estado global de erro/loading (quem chama cuida disso) para
+  // poder ser reaproveitada tanto pelos botoes individuais quanto pelo
+  // "Baixar tudo (em partes)". Devolve {ok, msg} para o chamador decidir.
+  async function gerarCategoria(
+    categoria: string
+  ): Promise<{ ok: boolean; msg?: string }> {
+    if (!estrutura) return { ok: false, msg: "Estrutura indisponível." };
+    let resp: Response;
     try {
-      const resp = await fetch("/api/copies", {
+      resp = await fetch(`/api/copies?categoria=${encodeURIComponent(categoria)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(estrutura),
       });
-      if (!resp.ok) {
-        let msg = "Falha ao gerar as copies.";
-        try {
-          const dados = await resp.json();
-          msg = dados?.erro || msg;
-        } catch {
-          /* resposta nao-JSON */
-        }
-        throw new Error(msg);
-      }
-      await baixarBlob(resp, "copies.docx.zip");
     } catch (err) {
-      setErro(err instanceof Error ? err.message : "Erro ao baixar as copies.");
+      const detalhe = err instanceof Error ? err.message : "erro de rede";
+      return { ok: false, msg: `Falha ao gerar ${categoria}: ${detalhe}` };
+    }
+    if (!resp.ok) {
+      // Melhora o diagnostico: inclui o status HTTP e o texto do servidor.
+      let servidor = resp.statusText || "";
+      try {
+        const dados = await resp.json();
+        servidor = dados?.erro || servidor;
+      } catch {
+        /* resposta nao-JSON */
+      }
+      return {
+        ok: false,
+        msg: `Falha (HTTP ${resp.status}) ao gerar ${categoria}: ${servidor}`,
+      };
+    }
+    await baixarBlob(resp, `copies-${categoria}.zip`);
+    return { ok: true };
+  }
+
+  // ---- Botao individual: gera e baixa UMA categoria. ----
+  async function baixarCategoria(categoria: string) {
+    if (!estrutura) return;
+    setErro(null);
+    setGerando(categoria);
+    try {
+      const r = await gerarCategoria(categoria);
+      if (!r.ok) setErro(r.msg || `Falha ao gerar ${categoria}.`);
     } finally {
-      setBaixandoCopies(false);
+      setGerando(null);
+    }
+  }
+
+  // ---- Botao "Baixar tudo (em partes)": chama as 5 categorias EM SEQUENCIA. ----
+  // Uma de cada vez (await). Se uma falhar, segue para as proximas e, ao final,
+  // mostra quais falharam.
+  async function baixarTudoEmPartes() {
+    if (!estrutura) return;
+    setErro(null);
+    setGerando("tudo");
+    const falhas: string[] = [];
+    try {
+      for (const c of CATEGORIAS_COPY) {
+        const r = await gerarCategoria(c.id);
+        if (!r.ok) falhas.push(r.msg || `Falha ao gerar ${c.id}`);
+      }
+    } finally {
+      setGerando(null);
+    }
+    if (falhas.length > 0) {
+      setErro(`Algumas categorias falharam: ${falhas.join(" | ")}`);
     }
   }
 
@@ -515,8 +570,9 @@ export default function NovaCampanhaPage() {
         <div className="card">
           <h2 style={{ marginTop: 0 }}>Gerar copies e salvar</h2>
           <p className="subtitulo">
-            As copies são geradas a partir da planilha que você editou. A geração
-            chama a IA para cada e-mail e pode levar de 1 a 2 minutos.
+            As copies são geradas a partir da planilha que você editou, agora
+            <strong> por categoria</strong> (uma requisição curta cada) para não
+            estourar o tempo limite. Cada categoria pode levar de 1 a 2 minutos.
           </p>
 
           {okFinal && (
@@ -525,18 +581,59 @@ export default function NovaCampanhaPage() {
             </div>
           )}
 
+          {/* Botoes por categoria — cada um chama /api/copies?categoria=X */}
+          <p style={{ marginTop: 16, marginBottom: 8, fontWeight: 600 }}>
+            Baixar por categoria
+          </p>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {CATEGORIAS_COPY.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => baixarCategoria(c.id)}
+                disabled={gerando !== null}
+              >
+                {gerando === c.id ? "Gerando..." : c.rotulo}
+              </button>
+            ))}
+          </div>
+
+          {/* Baixar tudo em partes (5 categorias em sequencia) */}
+          <p style={{ marginTop: 16, marginBottom: 8, fontWeight: 600 }}>
+            Ou baixar tudo de uma vez
+          </p>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={baixarTudoEmPartes}
+              disabled={gerando !== null}
+            >
+              {gerando === "tudo"
+                ? "Gerando tudo em partes..."
+                : "⬇️ Baixar tudo (em partes)"}
+            </button>
+          </div>
+
+          <p className="subtitulo" style={{ marginTop: 8, marginBottom: 0 }}>
+            {gerando !== null
+              ? "Gerando... isso pode levar ~1–2 min por categoria. Não feche a página."
+              : "Cada botão gera e baixa um .zip. O “Baixar tudo” faz as 5 categorias em sequência (um .zip por categoria)."}
+          </p>
+
           <p style={{ marginTop: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>
             <button
               type="button"
               className="botao-secundario"
               onClick={() => setEtapa(3)}
+              disabled={gerando !== null}
             >
               ← Voltar
             </button>
-            <button type="button" onClick={baixarCopies} disabled={baixandoCopies}>
-              {baixandoCopies ? "Gerando copies..." : "Baixar copies (.docx .zip)"}
-            </button>
-            <button type="button" onClick={salvar} disabled={salvando}>
+            <button
+              type="button"
+              onClick={salvar}
+              disabled={salvando || gerando !== null}
+            >
               {salvando ? "Salvando..." : "Salvar campanha"}
             </button>
           </p>

@@ -540,6 +540,29 @@ export async function POST(req: NextRequest) {
   const whatsapp = Array.isArray(campanha.whatsappGrupos) ? campanha.whatsappGrupos : [];
   const anuncios = Array.isArray(campanha.anuncios) ? campanha.anuncios : [];
 
+  // ===== Recorte por CATEGORIA (?categoria=...) =====
+  // Gera/empacota apenas a categoria pedida. Ausente/invalida/"tudo" => gera
+  // tudo (backward compat), com o zip "copies-completas.zip".
+  const CATEGORIAS_VALIDAS = ["emails", "whatsapp", "anuncios", "youtube", "paginas"] as const;
+  type Categoria = (typeof CATEGORIAS_VALIDAS)[number];
+  const categoriaParam = new URL(req.url).searchParams.get("categoria");
+  const categoria: Categoria | null = CATEGORIAS_VALIDAS.includes(categoriaParam as Categoria)
+    ? (categoriaParam as Categoria)
+    : null; // null = "tudo" (inclui ausente/invalida/"tudo")
+  const gerarTudo = categoria === null;
+
+  // Se a categoria pedida nao tiver itens, avisa (a UI trata). YouTube e Paginas
+  // sempre tem itens (fases/paginas fixas), entao so validamos as data-driven.
+  if (categoria === "emails" && disparos.length === 0) {
+    return NextResponse.json({ erro: "Nada para gerar em emails." }, { status: 400 });
+  }
+  if (categoria === "whatsapp" && whatsapp.length === 0) {
+    return NextResponse.json({ erro: "Nada para gerar em whatsapp." }, { status: 400 });
+  }
+  if (categoria === "anuncios" && anuncios.length === 0) {
+    return NextResponse.json({ erro: "Nada para gerar em anuncios." }, { status: 400 });
+  }
+
   // Monta o system prompt (cerebro + guardrails + regras de template).
   const cerebro = await getKnowledge();
   // Base de consulta (referencias de copy): opcional, entra depois do cerebro.
@@ -571,131 +594,141 @@ export async function POST(req: NextRequest) {
   const erros: string[] = [];
 
   // ===== E-mails (disparos) — corpo via LLM, concorrencia ~4 =====
-  const corpos: (string[] | null)[] = new Array(disparos.length).fill(null);
+  if (gerarTudo || categoria === "emails") {
+    const corpos: (string[] | null)[] = new Array(disparos.length).fill(null);
 
-  await comConcorrencia(disparos, 4, async (disparo, i) => {
-    try {
-      corpos[i] = await gerarCorpoEmail(client, systemPrompt, disparo, capa);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "erro desconhecido";
-      corpos[i] = null;
-      erros.push(
-        `E-mail #${String(i + 1).padStart(2, "0")} (${disparo.peca ?? "sem nome"}): ${msg}`
-      );
-    }
-  });
+    await comConcorrencia(disparos, 4, async (disparo, i) => {
+      try {
+        corpos[i] = await gerarCorpoEmail(client, systemPrompt, disparo, capa);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "erro desconhecido";
+        corpos[i] = null;
+        erros.push(
+          `E-mail #${String(i + 1).padStart(2, "0")} (${disparo.peca ?? "sem nome"}): ${msg}`
+        );
+      }
+    });
 
-  // Renderiza os .docx dos e-mails (mantendo a ordem).
-  for (let i = 0; i < disparos.length; i++) {
-    const disparo = disparos[i];
-    const corpo = corpos[i];
-    if (!corpo) continue; // erro ja registrado
-    const ordem = String(i + 1).padStart(2, "0");
-    const nomeArquivo = `emails/${ordem} - ${nomeSeguro(disparo.peca || "E-mail")}.docx`;
-    try {
-      const buffer = await renderEmailDocx({
-        campanha: nomeCampanha,
-        peca: disparo.peca || "E-mail",
-        dataHora: dataHora(disparo.data, disparo.hora),
-        base: disparo.base || "",
-        excluir: disparo.excluir || "",
-        assunto: disparo.assunto || "",
-        preHeader: disparo.preHeader || "",
-        corpo,
-        whatsapp: false,
-      });
-      zip.file(nomeArquivo, buffer);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "erro desconhecido";
-      erros.push(`E-mail #${ordem} (${disparo.peca ?? "sem nome"}): ${msg}`);
+    // Renderiza os .docx dos e-mails (mantendo a ordem).
+    for (let i = 0; i < disparos.length; i++) {
+      const disparo = disparos[i];
+      const corpo = corpos[i];
+      if (!corpo) continue; // erro ja registrado
+      const ordem = String(i + 1).padStart(2, "0");
+      const nomeArquivo = `emails/${ordem} - ${nomeSeguro(disparo.peca || "E-mail")}.docx`;
+      try {
+        const buffer = await renderEmailDocx({
+          campanha: nomeCampanha,
+          peca: disparo.peca || "E-mail",
+          dataHora: dataHora(disparo.data, disparo.hora),
+          base: disparo.base || "",
+          excluir: disparo.excluir || "",
+          assunto: disparo.assunto || "",
+          preHeader: disparo.preHeader || "",
+          corpo,
+          whatsapp: false,
+        });
+        zip.file(nomeArquivo, buffer);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "erro desconhecido";
+        erros.push(`E-mail #${ordem} (${disparo.peca ?? "sem nome"}): ${msg}`);
+      }
     }
   }
 
   // ===== WhatsApp (grupos) — direto do campo "mensagem" (sem LLM) =====
-  for (let i = 0; i < whatsapp.length; i++) {
-    const w = whatsapp[i];
-    const corpo = (w.mensagem || "").split(/\r?\n/);
-    const nomeArquivo = `whatsapp/WhatsApp Grupo - ${nomeSeguro(w.assunto || `Mensagem ${i + 1}`)}.docx`;
-    try {
-      const buffer = await renderEmailDocx({
-        campanha: nomeCampanha,
-        peca: w.assunto || `WhatsApp ${i + 1}`,
-        dataHora: dataHora(w.data, w.hora),
-        base: w.fase || "",
-        excluir: "",
-        assunto: w.assunto || "",
-        preHeader: "",
-        corpo,
-        whatsapp: true,
-      });
-      zip.file(nomeArquivo, buffer);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "erro desconhecido";
-      erros.push(`WhatsApp #${i + 1} (${w.assunto ?? "sem assunto"}): ${msg}`);
+  if (gerarTudo || categoria === "whatsapp") {
+    for (let i = 0; i < whatsapp.length; i++) {
+      const w = whatsapp[i];
+      const corpo = (w.mensagem || "").split(/\r?\n/);
+      const nomeArquivo = `whatsapp/WhatsApp Grupo - ${nomeSeguro(w.assunto || `Mensagem ${i + 1}`)}.docx`;
+      try {
+        const buffer = await renderEmailDocx({
+          campanha: nomeCampanha,
+          peca: w.assunto || `WhatsApp ${i + 1}`,
+          dataHora: dataHora(w.data, w.hora),
+          base: w.fase || "",
+          excluir: "",
+          assunto: w.assunto || "",
+          preHeader: "",
+          corpo,
+          whatsapp: true,
+        });
+        zip.file(nomeArquivo, buffer);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "erro desconhecido";
+        erros.push(`WhatsApp #${i + 1} (${w.assunto ?? "sem assunto"}): ${msg}`);
+      }
     }
   }
 
   // ===== Anuncios — 1 chamada LLM por item (video vs estatico), concorrencia 4 =====
-  const anunciosBuf: (Buffer | null)[] = new Array(anuncios.length).fill(null);
-  await comConcorrencia(anuncios, 4, async (anuncio, i) => {
-    try {
-      anunciosBuf[i] = ehVideo(anuncio.formato)
-        ? await gerarAnuncioVideo(client, systemPrompt, anuncio, capa, nomeCampanha)
-        : await gerarAnuncioEstatico(client, systemPrompt, anuncio, capa, nomeCampanha);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "erro desconhecido";
-      anunciosBuf[i] = null;
-      erros.push(
-        `Anúncio #${String(i + 1).padStart(2, "0")} (${anuncio.formato ?? "sem formato"}): ${msg}`
-      );
+  if (gerarTudo || categoria === "anuncios") {
+    const anunciosBuf: (Buffer | null)[] = new Array(anuncios.length).fill(null);
+    await comConcorrencia(anuncios, 4, async (anuncio, i) => {
+      try {
+        anunciosBuf[i] = ehVideo(anuncio.formato)
+          ? await gerarAnuncioVideo(client, systemPrompt, anuncio, capa, nomeCampanha)
+          : await gerarAnuncioEstatico(client, systemPrompt, anuncio, capa, nomeCampanha);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "erro desconhecido";
+        anunciosBuf[i] = null;
+        erros.push(
+          `Anúncio #${String(i + 1).padStart(2, "0")} (${anuncio.formato ?? "sem formato"}): ${msg}`
+        );
+      }
+    });
+    for (let i = 0; i < anuncios.length; i++) {
+      const buf = anunciosBuf[i];
+      if (!buf) continue; // erro ja registrado
+      const ordem = String(i + 1).padStart(2, "0");
+      const nome = nomeSeguro(`${anuncios[i].formato || "Anuncio"} - ${anuncios[i].angulo || ""}`);
+      zip.file(`anuncios/${ordem} - ${nome}.docx`, buf);
     }
-  });
-  for (let i = 0; i < anuncios.length; i++) {
-    const buf = anunciosBuf[i];
-    if (!buf) continue; // erro ja registrado
-    const ordem = String(i + 1).padStart(2, "0");
-    const nome = nomeSeguro(`${anuncios[i].formato || "Anuncio"} - ${anuncios[i].angulo || ""}`);
-    zip.file(`anuncios/${ordem} - ${nome}.docx`, buf);
   }
 
   // ===== YouTube — 3 descricoes (fases), concorrencia 4 =====
-  const fasesYoutube = ["Pré-lançamento", "Promoção", "Último dia"];
-  const youtubeBuf: (Buffer | null)[] = new Array(fasesYoutube.length).fill(null);
-  await comConcorrencia(fasesYoutube, 4, async (fase, i) => {
-    try {
-      youtubeBuf[i] = await gerarYoutube(client, systemPrompt, fase, capa);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "erro desconhecido";
-      youtubeBuf[i] = null;
-      erros.push(`YouTube (${fase}): ${msg}`);
+  if (gerarTudo || categoria === "youtube") {
+    const fasesYoutube = ["Pré-lançamento", "Promoção", "Último dia"];
+    const youtubeBuf: (Buffer | null)[] = new Array(fasesYoutube.length).fill(null);
+    await comConcorrencia(fasesYoutube, 4, async (fase, i) => {
+      try {
+        youtubeBuf[i] = await gerarYoutube(client, systemPrompt, fase, capa);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "erro desconhecido";
+        youtubeBuf[i] = null;
+        erros.push(`YouTube (${fase}): ${msg}`);
+      }
+    });
+    for (let i = 0; i < fasesYoutube.length; i++) {
+      const buf = youtubeBuf[i];
+      if (!buf) continue;
+      zip.file(`youtube/Descricao YouTube - ${nomeSeguro(fasesYoutube[i])}.docx`, buf);
     }
-  });
-  for (let i = 0; i < fasesYoutube.length; i++) {
-    const buf = youtubeBuf[i];
-    if (!buf) continue;
-    zip.file(`youtube/Descricao YouTube - ${nomeSeguro(fasesYoutube[i])}.docx`, buf);
   }
 
   // ===== Paginas — 3 HTML autocontidos, concorrencia 4 =====
-  const paginas: { tipo: "landing" | "sucesso" | "vendas"; arquivo: string; rotulo: string }[] = [
-    { tipo: "landing", arquivo: "landing-page.html", rotulo: "Landing Page" },
-    { tipo: "sucesso", arquivo: "pagina-de-sucesso.html", rotulo: "Página de Sucesso" },
-    { tipo: "vendas", arquivo: "pagina-de-vendas.html", rotulo: "Página de Vendas" },
-  ];
-  const paginasHtml: (string | null)[] = new Array(paginas.length).fill(null);
-  await comConcorrencia(paginas, 4, async (p, i) => {
-    try {
-      paginasHtml[i] = await gerarPaginaHtml(client, systemPrompt, p.tipo, capa, exemploVendas);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "erro desconhecido";
-      paginasHtml[i] = null;
-      erros.push(`Página (${p.rotulo}): ${msg}`);
+  if (gerarTudo || categoria === "paginas") {
+    const paginas: { tipo: "landing" | "sucesso" | "vendas"; arquivo: string; rotulo: string }[] = [
+      { tipo: "landing", arquivo: "landing-page.html", rotulo: "Landing Page" },
+      { tipo: "sucesso", arquivo: "pagina-de-sucesso.html", rotulo: "Página de Sucesso" },
+      { tipo: "vendas", arquivo: "pagina-de-vendas.html", rotulo: "Página de Vendas" },
+    ];
+    const paginasHtml: (string | null)[] = new Array(paginas.length).fill(null);
+    await comConcorrencia(paginas, 4, async (p, i) => {
+      try {
+        paginasHtml[i] = await gerarPaginaHtml(client, systemPrompt, p.tipo, capa, exemploVendas);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "erro desconhecido";
+        paginasHtml[i] = null;
+        erros.push(`Página (${p.rotulo}): ${msg}`);
+      }
+    });
+    for (let i = 0; i < paginas.length; i++) {
+      const html = paginasHtml[i];
+      if (!html) continue;
+      zip.file(`paginas/${paginas[i].arquivo}`, html);
     }
-  });
-  for (let i = 0; i < paginas.length; i++) {
-    const html = paginasHtml[i];
-    if (!html) continue;
-    zip.file(`paginas/${paginas[i].arquivo}`, html);
   }
 
   // Se houve erros, inclui um arquivo _erros.txt em vez de quebrar tudo.
@@ -721,11 +754,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const zipBuffer = await zip.generateAsync({ type: "nodebuffer" });
+    const nomeZip = gerarTudo ? "copies-completas.zip" : `copies-${categoria}.zip`;
     return new NextResponse(new Uint8Array(zipBuffer), {
       status: 200,
       headers: {
         "Content-Type": "application/zip",
-        "Content-Disposition": 'attachment; filename="copies-completas.zip"',
+        "Content-Disposition": `attachment; filename="${nomeZip}"`,
       },
     });
   } catch (e) {
