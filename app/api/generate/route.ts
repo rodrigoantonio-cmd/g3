@@ -6,7 +6,13 @@
 // payload de exemplo (stub estruturado) e um aviso, para o app rodar mesmo sem chave.
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAnthropic, ANTHROPIC_MODEL, anthropicConfigurado } from "@/lib/anthropic";
+import {
+  getAnthropic,
+  ANTHROPIC_MODEL,
+  anthropicConfigurado,
+  ehErroDeCredito,
+  MSG_SEM_CREDITO,
+} from "@/lib/anthropic";
 import { getKnowledge } from "@/lib/knowledge";
 import { getReferencias } from "@/lib/referencias";
 import type { Briefing, CampanhaEstruturada } from "@/lib/types";
@@ -249,6 +255,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(campanha, { status: 200 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "erro desconhecido";
+    if (ehErroDeCredito(msg)) {
+      return NextResponse.json({ erro: MSG_SEM_CREDITO }, { status: 402 });
+    }
     return NextResponse.json(
       { erro: `Falha ao chamar a Anthropic: ${msg}` },
       { status: 502 }

@@ -17,7 +17,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import JSZip from "jszip";
-import { getAnthropic, ANTHROPIC_MODEL, anthropicConfigurado } from "@/lib/anthropic";
+import {
+  getAnthropic,
+  ANTHROPIC_MODEL,
+  anthropicConfigurado,
+  ehErroDeCredito,
+  MSG_SEM_CREDITO,
+} from "@/lib/anthropic";
 import { getKnowledge } from "@/lib/knowledge";
 import { getReferencias } from "@/lib/referencias";
 import { renderEmailDocx } from "@/lib/docx";
@@ -430,6 +436,12 @@ export async function POST(req: NextRequest) {
       const msg = e instanceof Error ? e.message : "erro desconhecido";
       erros.push(`WhatsApp #${indice + 1} (${w.assunto ?? "sem assunto"}): ${msg}`);
     }
+  }
+
+  // Se alguma falha foi por falta de saldo na API, responde a mensagem amigavel
+  // (402) em vez de entregar um zip com _alteracoes.txt listando o erro cru.
+  if (erros.some((e) => ehErroDeCredito(e))) {
+    return NextResponse.json({ erro: MSG_SEM_CREDITO }, { status: 402 });
   }
 
   // 8) Arquivo _alteracoes.txt listando o que mudou.

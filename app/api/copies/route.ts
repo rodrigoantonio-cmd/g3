@@ -8,7 +8,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import JSZip from "jszip";
-import { getAnthropic, ANTHROPIC_MODEL, anthropicConfigurado } from "@/lib/anthropic";
+import {
+  getAnthropic,
+  ANTHROPIC_MODEL,
+  anthropicConfigurado,
+  ehErroDeCredito,
+  MSG_SEM_CREDITO,
+} from "@/lib/anthropic";
 import { getKnowledge } from "@/lib/knowledge";
 import { getReferencias } from "@/lib/referencias";
 import {
@@ -729,6 +735,12 @@ export async function POST(req: NextRequest) {
       if (!html) continue;
       zip.file(`paginas/${paginas[i].arquivo}`, html);
     }
+  }
+
+  // Se alguma peca falhou por falta de saldo na API, responde a mensagem
+  // amigavel (402) em vez de devolver um zip so com _erros.txt.
+  if (erros.some((e) => ehErroDeCredito(e))) {
+    return NextResponse.json({ erro: MSG_SEM_CREDITO }, { status: 402 });
   }
 
   // Se houve erros, inclui um arquivo _erros.txt em vez de quebrar tudo.

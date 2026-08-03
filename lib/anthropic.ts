@@ -16,3 +16,20 @@ export function getAnthropic(): Anthropic | null {
   if (!apiKey) return null;
   return new Anthropic({ apiKey });
 }
+
+// Mensagem amigavel exibida quando a API da Anthropic esta sem saldo.
+export const MSG_SEM_CREDITO =
+  "⚠️ Sem saldo na API da Anthropic. Peça ao Rodrigo para recarregar os créditos em console.anthropic.com/settings/billing e tente novamente.";
+
+// Detecta se a mensagem de erro indica falta de saldo/credito na API da Anthropic.
+// A API devolve 400 (invalid_request_error) com "credit balance is too low" quando
+// o saldo acabou; cobrimos tambem variacoes comuns de erro de faturamento.
+export function ehErroDeCredito(msg: string): boolean {
+  const m = (msg || "").toLowerCase();
+  return (
+    m.includes("credit balance") ||
+    m.includes("too low") ||
+    m.includes("insufficient") ||
+    m.includes("billing")
+  );
+}
