@@ -37,7 +37,8 @@ const CATEGORIAS_COPY = [
   { id: "whatsapp", rotulo: "💬 WhatsApp" },
   { id: "anuncios", rotulo: "📢 Anúncios" },
   { id: "youtube", rotulo: "▶️ YouTube" },
-  { id: "paginas", rotulo: "📄 Páginas (LP/vendas/sucesso)" },
+  { id: "paginas-lp", rotulo: "📄 LP + Sucesso" },
+  { id: "paginas-vendas", rotulo: "🛒 Página de Vendas" },
 ] as const;
 
 export default function NovaCampanhaPage() {
@@ -240,7 +241,7 @@ export default function NovaCampanhaPage() {
     }
   }
 
-  // ---- Botao "Baixar tudo (em partes)": chama as 5 categorias EM SEQUENCIA. ----
+  // ---- Botao "Baixar tudo (em partes)": chama as 6 categorias EM SEQUENCIA. ----
   // Uma de cada vez (await). Se uma falhar, segue para as proximas e, ao final,
   // mostra quais falharam.
   async function baixarTudoEmPartes() {
@@ -617,7 +618,7 @@ export default function NovaCampanhaPage() {
           <p className="subtitulo" style={{ marginTop: 8, marginBottom: 0 }}>
             {gerando !== null
               ? "Gerando... isso pode levar ~1–2 min por categoria. Não feche a página."
-              : "Cada botão gera e baixa um .zip. O “Baixar tudo” faz as 5 categorias em sequência (um .zip por categoria)."}
+              : "Cada botão gera e baixa um .zip. O “Baixar tudo” faz as 6 categorias em sequência (um .zip por categoria)."}
           </p>
 
           <p style={{ marginTop: 16, display: "flex", gap: 12, flexWrap: "wrap" }}>

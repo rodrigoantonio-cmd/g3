@@ -549,7 +549,15 @@ export async function POST(req: NextRequest) {
   // ===== Recorte por CATEGORIA (?categoria=...) =====
   // Gera/empacota apenas a categoria pedida. Ausente/invalida/"tudo" => gera
   // tudo (backward compat), com o zip "copies-completas.zip".
-  const CATEGORIAS_VALIDAS = ["emails", "whatsapp", "anuncios", "youtube", "paginas"] as const;
+  const CATEGORIAS_VALIDAS = [
+    "emails",
+    "whatsapp",
+    "anuncios",
+    "youtube",
+    "paginas",
+    "paginas-lp",
+    "paginas-vendas",
+  ] as const;
   type Categoria = (typeof CATEGORIAS_VALIDAS)[number];
   const categoriaParam = new URL(req.url).searchParams.get("categoria");
   const categoria: Categoria | null = CATEGORIAS_VALIDAS.includes(categoriaParam as Categoria)
@@ -713,12 +721,26 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ===== Paginas — 3 HTML autocontidos, concorrencia 4 =====
-  if (gerarTudo || categoria === "paginas") {
+  // ===== Paginas — HTML autocontidos, concorrencia 4 =====
+  // Categoria dividida: "paginas-lp" gera landing + sucesso; "paginas-vendas"
+  // gera a pagina de vendas (pesada). "paginas"/"tudo" mantem as 3 (compat).
+  const gerarLpSucesso =
+    gerarTudo || categoria === "paginas" || categoria === "paginas-lp";
+  const gerarVendas =
+    gerarTudo || categoria === "paginas" || categoria === "paginas-vendas";
+  if (gerarLpSucesso || gerarVendas) {
     const paginas: { tipo: "landing" | "sucesso" | "vendas"; arquivo: string; rotulo: string }[] = [
-      { tipo: "landing", arquivo: "landing-page.html", rotulo: "Landing Page" },
-      { tipo: "sucesso", arquivo: "pagina-de-sucesso.html", rotulo: "Página de Sucesso" },
-      { tipo: "vendas", arquivo: "pagina-de-vendas.html", rotulo: "Página de Vendas" },
+      ...(gerarLpSucesso
+        ? ([
+            { tipo: "landing", arquivo: "landing-page.html", rotulo: "Landing Page" },
+            { tipo: "sucesso", arquivo: "pagina-de-sucesso.html", rotulo: "Página de Sucesso" },
+          ] as const)
+        : []),
+      ...(gerarVendas
+        ? ([
+            { tipo: "vendas", arquivo: "pagina-de-vendas.html", rotulo: "Página de Vendas" },
+          ] as const)
+        : []),
     ];
     const paginasHtml: (string | null)[] = new Array(paginas.length).fill(null);
     await comConcorrencia(paginas, 4, async (p, i) => {
