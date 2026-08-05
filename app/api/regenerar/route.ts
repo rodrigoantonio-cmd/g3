@@ -32,7 +32,7 @@ import type { CampanhaEstruturada } from "@/lib/types";
 
 // Precisa do runtime Node.js (fs para knowledge, Buffer para docx/zip).
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 // ===== Guardrails / regras de template (mesma fonte de verdade do /api/copies) =====
 const GUARDRAILS = `

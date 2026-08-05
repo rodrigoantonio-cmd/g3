@@ -27,7 +27,7 @@ import type { CampanhaEstruturada } from "@/lib/types";
 
 // Precisa do runtime Node.js (fs para o knowledge, Buffer para docx/zip).
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 // Guardrails repassados ao modelo (mesma fonte de verdade do /api/generate).
 const GUARDRAILS = `
